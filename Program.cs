@@ -2,16 +2,12 @@
 using System.Collections;
 using System.IO;
 using System.Reflection;
-using Newtonsoft.Json;
 using Microsoft.Win32;
 using System.Net.Http;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.CommandLine;
 using System.CommandLine.Invocation;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Reflection.Metadata;
 using Octokit;
 
 
@@ -27,11 +23,11 @@ class SKUUpdater
     private static DateTime titleUpdateTimestamp = DateTime.UtcNow;
     private static GitHubClient github = new GitHubClient(new ProductHeaderValue("SKUUpdater.net"));
     private static HttpClient netClient = new HttpClient();
-    static void updateTitle(long downloadedSize, long totalSize)
+    static void updateTitle(float downloadedSize, float totalSize)
     {
         if ((DateTime.UtcNow - titleUpdateTimestamp).TotalMilliseconds < 500)
             return;
-        Console.Title = $"{downloadedSize / (1024 * 1024):.2f} MB of {totalSize / (1024 * 1024):.2f} MB, {downloadedSize / totalSize * 100:.2f}%. Sku Updater";
+        Console.Title = $"{downloadedSize / (1024 * 1024):F2} MB of {totalSize / (1024 * 1024):F2} MB, {downloadedSize / totalSize * 100:F2}%. Sku Updater";
         titleUpdateTimestamp = DateTime.UtcNow;
     }
     static void confirmedExit(int code)
@@ -43,7 +39,7 @@ class SKUUpdater
     static async Task<bool> selfUpdate()
     {
         var currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
-        var release = await github.Repository.Release.GetLatest("cyrmax", "SKUUpdater.net");
+        var release = await github.Repository.Release.GetLatest("cyrmax", "sku-updater");
         var latestVersion = new Version(release.TagName);
         if (currentVersion >= latestVersion)
         {
@@ -55,7 +51,7 @@ class SKUUpdater
             string? url = null;
             foreach (var asset in release.Assets)
             {
-                if (asset.Name == "sku-updater.exe")
+                if (asset.Name == "sku-updater.zip")
                 {
                     url = asset.BrowserDownloadUrl;
                     break;
@@ -95,6 +91,15 @@ class SKUUpdater
             return true;
         }
     }
+
+    static string? findWowc()
+    {
+        var value = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft")?.GetValue("InstallPath")?.ToString();
+        if (value is null) return null;
+        return Path.Combine(Directory.GetParent(value)!.FullName, "_classic_");
+    }
+
+
     public static async Task<int> Main(string[] args)
     {
         var forceOption = new Option<bool>("--force", "Force update even if local version is equal or never than latest available. Mainly used for testing purposes.");
@@ -105,11 +110,18 @@ class SKUUpdater
         rootCommand.AddOption(forceOption);
         rootCommand.AddOption(diagnosticOption);
         rootCommand.AddOption(noUpdateOption);
-        rootCommand.SetHandler((force, diagnostic, noUpdate) =>
+        rootCommand.SetHandler(async (force, diagnostic, noUpdate) =>
         {
-            // var updater = new Updater();
-            // updater.Update(force, diagnostic, noUpdate);
+            await _main(force, diagnostic, noUpdate);
         }, forceOption, diagnosticOption, noUpdateOption);
         return await rootCommand.InvokeAsync(args);
+    }
+
+    static async Task _main(bool force, bool diagnostic, bool noUpdate)
+    {
+        var shouldUpdate = await selfUpdate();
+        var wowPath = findWowc();
+        Console.WriteLine($"Wow found at path {wowPath}");
+        Console.ReadLine();
     }
 }
