@@ -8,9 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="htmlagilitypack" Version="1.11.54" />
     <PackageReference Include="microsoft.win32.registry" Version="5.0.0" />
     <PackageReference Include="newtonsoft.json" Version="13.0.3" />
+    <PackageReference Include="octokit" Version="9.0.0" />
     <PackageReference Include="system.commandline" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 

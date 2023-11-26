@@ -1,46 +1,18 @@
 ﻿using System;
 using System.Collections;
+using System.IO;
 using System.Reflection;
 using Newtonsoft.Json;
 using Microsoft.Win32;
 using System.Net.Http;
 using System.IO.Compression;
-using HtmlAgilityPack;
 using System.Text.RegularExpressions;
 using System.CommandLine;
 using System.CommandLine.Invocation;
-
-record Version(int Major, int Minor, int Subminor, int Patch) : IComparable<Version>
-{
-    public static Version? Parse(string input)
-    {
-        string[] parts = input.Split(".", StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0 || parts.Length > 4)
-            return null;
-        int[] versionParts = new int[4];
-        for (int i = 0; i < parts.Length; i++)
-        {
-            if (!int.TryParse(parts[i], out versionParts[i]))
-                return null;
-        }
-        return new Version(versionParts[0], versionParts[1], versionParts[2], versionParts[3]);
-    }
-    public int CompareTo(Version? other)
-    {
-        if (other is null) return 1;
-        int majorComparison = Major.CompareTo(other.Major);
-        if (majorComparison != 0) return majorComparison;
-        int minorComparison = Minor.CompareTo(other.Minor);
-        if (minorComparison != 0) return minorComparison;
-        int subminorComparison = Subminor.CompareTo(other.Subminor);
-        if (subminorComparison != 0) return subminorComparison;
-        return Patch.CompareTo(other.Patch);
-    }
-    public override string ToString()
-    {
-        return $"{this.Major}.{this.Minor}.{this.Subminor}.{this.Patch}";
-    }
-}
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Reflection.Metadata;
+using Octokit;
 
 
 static class Constants
@@ -53,7 +25,9 @@ static class Constants
 class SKUUpdater
 {
     private static DateTime titleUpdateTimestamp = DateTime.UtcNow;
-    static void updateTitle(int downloadedSize, int totalSize)
+    private static GitHubClient github = new GitHubClient(new ProductHeaderValue("SKUUpdater.net"));
+    private static HttpClient netClient = new HttpClient();
+    static void updateTitle(long downloadedSize, long totalSize)
     {
         if ((DateTime.UtcNow - titleUpdateTimestamp).TotalMilliseconds < 500)
             return;
@@ -65,6 +39,61 @@ class SKUUpdater
         Console.WriteLine("Press enter to exit the program.");
         Console.ReadLine();
         Environment.Exit(code);
+    }
+    static async Task<bool> selfUpdate()
+    {
+        var currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
+        var release = await github.Repository.Release.GetLatest("cyrmax", "SKUUpdater.net");
+        var latestVersion = new Version(release.TagName);
+        if (currentVersion >= latestVersion)
+        {
+            return false;
+        }
+        else
+        {
+            Console.WriteLine($"SKU Updater update available: {latestVersion}. Downloading...");
+            string? url = null;
+            foreach (var asset in release.Assets)
+            {
+                if (asset.Name == "sku-updater.exe")
+                {
+                    url = asset.BrowserDownloadUrl;
+                    break;
+                }
+            }
+            if (url is null)
+            {
+                Console.WriteLine("Unable to download latest Sku Updater version.");
+                return false;
+            }
+            var localFilename = url.Split("/").Last() + ".tmp";
+            var response = await netClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("Unable to download latest Sku Updater version.");
+                return false;
+            }
+            var totalSize = response.Content.Headers.ContentLength ?? -1;
+            var downloadedSize = 0L;
+            using var file = File.Create(localFilename);
+            using var stream = await response.Content.ReadAsStreamAsync();
+            byte[] buffer = new byte[16384];
+            int bytesRead;
+            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                await file.WriteAsync(buffer, 0, bytesRead);
+                downloadedSize += bytesRead;
+                updateTitle(downloadedSize, totalSize);
+            }
+            using var restartFile = new StreamWriter("sku-updater-restart.bat");
+            await restartFile.WriteLineAsync(@"@echo off
+            ping -n 5 localhost > nul
+            del sku-updater.exe
+            copy sku-updater.exe.tmp sku-updater.exe
+            start sku-updater.exe
+            ");
+            return true;
+        }
     }
     public static async Task<int> Main(string[] args)
     {
